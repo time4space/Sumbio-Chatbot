@@ -11,10 +11,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import kotlinx.coroutines.Dispatchers
@@ -42,13 +45,52 @@ class MainActivity : ComponentActivity() {
             var isReady by remember { mutableStateOf(false) }
             var isCopying by remember { mutableStateOf(false) }
             var inputText by remember { mutableStateOf("") }
-            var responseText by remember { mutableStateOf("질문을 입력하거나 말씀해주세요.") }
+            var responseText by remember { mutableStateOf("마이크를 누르고 말씀해주세요.") }
             var isLoading by remember { mutableStateOf(false) }
             val scope = rememberCoroutineScope()
 
-            val modelFile = File(filesDir, "gemma-2b-it-gpu-int4.bin")
+            // 🌟 수정: 사용자가 다운로드한 파일 이름이 달라도, 앱 내부에서는 'ai_model.task'로 통일해서 저장합니다 🌟
+            val modelFile = File(filesDir, "ai_model.task")
 
-            // 🌟 수정된 핵심 기능: 스마트폰에서 수동 다운로드한 파일을 찾아 앱 안으로 복사하기 🌟
+            val askAi: (String) -> Unit = { query ->
+                if (llmInference == null) {
+                    responseText = "오류: 인공지능 뇌(모델)가 로딩되지 않았습니다."
+                } else if (query.isNotBlank()) {
+                    isLoading = true
+                    responseText = "생각하는 중..."
+                    tts?.stop()
+
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            val result = llmInference?.generateResponse(query) ?: "앗, 대답을 만들지 못했어요."
+                            withContext(Dispatchers.Main) {
+                                responseText = result
+                                isLoading = false
+                                tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, "response_id")
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                responseText = "에러 발생: ${e.message}"
+                                isLoading = false
+                            }
+                        }
+                    }
+                }
+            }
+
+            val speechLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                if (result.resultCode == Activity.RESULT_OK) {
+                    val data = result.data
+                    val matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                    if (!matches.isNullOrEmpty()) {
+                        inputText = matches[0]
+                        askAi(inputText)
+                    }
+                }
+            }
+
             val filePickerLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.GetContent()
             ) { uri: Uri? ->
@@ -69,9 +111,9 @@ class MainActivity : ComponentActivity() {
                             }
                             withContext(Dispatchers.Main) {
                                 isCopying = false
-                                isReady = true
-                                statusText = "복사 완료! 이제 완벽하게 작동합니다."
-                                initEngine(modelFile.absolutePath)
+                                val resultMsg = initEngine(modelFile.absolutePath)
+                                statusText = resultMsg
+                                isReady = llmInference != null
                             }
                         } catch (e: Exception) {
                             withContext(Dispatchers.Main) {
@@ -83,25 +125,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
-            val speechLauncher = rememberLauncherForActivityResult(
-                contract = ActivityResultContracts.StartActivityForResult()
-            ) { result ->
-                if (result.resultCode == Activity.RESULT_OK) {
-                    val data = result.data
-                    val matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                    if (!matches.isNullOrEmpty()) {
-                        inputText = matches[0]
-                    }
-                }
-            }
-
             LaunchedEffect(Unit) {
                 if (modelFile.exists() && modelFile.length() > 0) {
-                    statusText = "준비 완료! (인터넷 없이도 작동합니다)"
-                    isReady = true
-                    initEngine(modelFile.absolutePath)
+                    statusText = "엔진 로딩 중..."
+                    val resultMsg = initEngine(modelFile.absolutePath)
+                    statusText = resultMsg
+                    isReady = llmInference != null
                 } else {
-                    statusText = "먼저 인공지능 파일(.bin)을 다운로드해주세요."
+                    // 🌟 수정: .bin 대신 .task 형식도 안내 🌟
+                    statusText = "먼저 최신 인공지능 파일(.task)을 찾아 넣어주세요."
                 }
             }
 
@@ -120,10 +152,10 @@ class MainActivity : ComponentActivity() {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     } else {
                         Button(
-                            onClick = { filePickerLauncher.launch("*/*") }, // 모든 파일 찾기 창 띄우기
+                            onClick = { filePickerLauncher.launch("*/*") },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("다운받은 인공지능 파일 찾아서 넣기")
+                            Text("다운받은 인공지능 파일(.task) 찾아서 넣기")
                         }
                     }
                 }
@@ -138,7 +170,9 @@ class MainActivity : ComponentActivity() {
                         onValueChange = { inputText = it },
                         label = { Text("여기에 질문을 적어주세요") },
                         modifier = Modifier.weight(1f),
-                        enabled = isReady
+                        enabled = isReady,
+                        keyboardOptions = KeyboardOptions.Default.copy(imeAction = ImeAction.Send),
+                        keyboardActions = KeyboardActions(onSend = { askAi(inputText) })
                     )
                     
                     Spacer(modifier = Modifier.width(8.dp))
@@ -157,37 +191,20 @@ class MainActivity : ComponentActivity() {
                                 // Ignore
                             }
                         },
-                        enabled = isReady
+                        enabled = isReady,
+                        shape = MaterialTheme.shapes.large,
+                        contentPadding = PaddingValues(16.dp)
                     ) {
-                        Text("🎤")
+                        Text("🎤", style = MaterialTheme.typography.titleLarge)
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Button(
-                    onClick = {
-                        if (llmInference == null) return@Button
-                        isLoading = true
-                        responseText = "생각하는 중..."
-                        tts?.stop()
-
-                        scope.launch(Dispatchers.IO) {
-                            val result = llmInference?.generateResponse(inputText) ?: "앗, 다시 물어봐주세요!"
-                            withContext(Dispatchers.Main) {
-                                responseText = result
-                                isLoading = false
-                                tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, "response_id")
-                            }
-                        }
-                    },
-                    enabled = isReady && !isLoading,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(if (isLoading) "기다려주세요..." else "질문 보내기")
-                }
-
                 Spacer(modifier = Modifier.height(20.dp))
+
+                if (isLoading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
 
                 Card(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     Text(
@@ -200,15 +217,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun initEngine(path: String) {
-        try {
+    private fun initEngine(path: String): String {
+        return try {
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(path)
                 .setMaxTokens(512)
                 .build()
             llmInference = LlmInference.createFromOptions(this, options)
+            "준비 완료! (인터넷 없이도 작동합니다)"
         } catch (e: Exception) {
             e.printStackTrace()
+            "엔진 로딩 실패: 지원하지 않는 모델 형식이거나 메모리가 부족합니다. (${e.message})"
         }
     }
 
