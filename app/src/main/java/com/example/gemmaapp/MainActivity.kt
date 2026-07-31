@@ -27,16 +27,15 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private var llmInference: LlmInference? = null
-    // 🌟 글자를 목소리로 읽어주는 도구 준비 🌟
     private var tts: TextToSpeech? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 🌟 안드로이드 기본 목소리(한국어) 설정 🌟
+        // 🌟 수정 1: 한국어 설정 문법 오류 수정 (setLanguage) 🌟
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.KOREAN
+                tts?.setLanguage(Locale.KOREAN)
             }
         }
 
@@ -141,9 +140,7 @@ class MainActivity : ComponentActivity() {
                     
                     Button(
                         onClick = {
-                            // 질문할 때 인공지능이 말하고 있던 게 있다면 조용히 시키기
                             tts?.stop() 
-                            
                             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
@@ -152,7 +149,7 @@ class MainActivity : ComponentActivity() {
                             try {
                                 speechLauncher.launch(intent)
                             } catch (e: Exception) {
-                                // 구글 앱(음성인식)이 없는 경우 대비
+                                // Ignore
                             }
                         },
                         enabled = isReady
@@ -168,7 +165,6 @@ class MainActivity : ComponentActivity() {
                         if (llmInference == null) return@Button
                         isLoading = true
                         responseText = "생각하는 중..."
-                        // 새로 질문 보낼 때도 말 멈추기
                         tts?.stop()
 
                         scope.launch(Dispatchers.IO) {
@@ -177,8 +173,8 @@ class MainActivity : ComponentActivity() {
                                 responseText = result
                                 isLoading = false
                                 
-                                // 🌟 인공지능이 글자를 사람 목소리로 소리 내어 읽어주기! 🌟
-                                tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, null)
+                                // 🌟 수정 2: 마지막 파라미터에 확실한 이름표("response_id") 달아주기 🌟
+                                tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, "response_id")
                             }
                         }
                     },
@@ -267,7 +263,6 @@ class MainActivity : ComponentActivity() {
         input.close()
     }
 
-    // 🌟 앱을 끌 때는 입 다물고 깔끔하게 정리하기 🌟
     override fun onDestroy() {
         tts?.stop()
         tts?.shutdown()
