@@ -96,7 +96,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
-                Divider()
+                HorizontalDivider()
                 Spacer(modifier = Modifier.height(16.dp))
 
                 OutlinedTextField(
@@ -154,21 +154,59 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // 똑똑해진 다운로드 기능! (리다이렉트 추적 + 화면 과부하 방지)
     private fun downloadFile(urlString: String, outputFile: File, onProgress: (Long, Long) -> Unit) {
-        val url = URL(urlString)
-        val connection = url.openConnection() as HttpURLConnection
-        connection.connect()
+        var currentUrl = urlString
+        var connection: HttpURLConnection
+        var redirects = 0
+        
+        // 1. 진짜 파일이 있는 서버 주소 끝까지 쫓아가기
+        while (true) {
+            val url = URL(currentUrl)
+            connection = url.openConnection() as HttpURLConnection
+            connection.connectTimeout = 15000
+            connection.readTimeout = 15000
+            connection.instanceFollowRedirects = false 
+
+            val status = connection.responseCode
+            if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
+                status == HttpURLConnection.HTTP_MOVED_PERM ||
+                status == HttpURLConnection.HTTP_SEE_OTHER) {
+                currentUrl = connection.getHeaderField("Location")
+                redirects++
+                if (redirects > 5) throw Exception("주소 이동이 너무 많습니다.")
+                continue
+            }
+            break
+        }
+
+        if (connection.responseCode !in 200..299) {
+            throw Exception("서버 연결 실패: ${connection.responseCode}")
+        }
+
         val fileLength = connection.contentLengthLong
         val input = connection.inputStream
         val output = FileOutputStream(outputFile)
-        val data = ByteArray(4096)
+        
+        // 2. 화면 기절 방지: 바구니 크기를 늘리고, 1MB마다 한 번씩만 보고하기
+        val data = ByteArray(16384) 
         var total: Long = 0
         var count: Int
+        var lastUpdate: Long = 0
+
         while (input.read(data).also { count = it } != -1) {
             total += count.toLong()
-            if (fileLength > 0) onProgress(total, fileLength)
             output.write(data, 0, count)
+            
+            // 다운로드 양이 이전 보고 때보다 1MB(1048576 byte) 이상 늘었을 때만 화면 갱신
+            if (total - lastUpdate > 1024 * 1024 || total == fileLength) {
+                lastUpdate = total
+                if (fileLength > 0) {
+                    onProgress(total, fileLength)
+                }
+            }
         }
+        
         output.flush()
         output.close()
         input.close()
