@@ -2,6 +2,7 @@ package com.example.gemmaapp
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
@@ -21,8 +22,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
@@ -32,7 +31,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // 🌟 수정 1: 한국어 설정 문법 오류 수정 (setLanguage) 🌟
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 tts?.setLanguage(Locale.KOREAN)
@@ -42,14 +40,48 @@ class MainActivity : ComponentActivity() {
         setContent {
             var statusText by remember { mutableStateOf("상태 확인 중...") }
             var isReady by remember { mutableStateOf(false) }
-            var isDownloading by remember { mutableStateOf(false) }
-            var progressText by remember { mutableStateOf("") }
+            var isCopying by remember { mutableStateOf(false) }
             var inputText by remember { mutableStateOf("") }
             var responseText by remember { mutableStateOf("질문을 입력하거나 말씀해주세요.") }
             var isLoading by remember { mutableStateOf(false) }
             val scope = rememberCoroutineScope()
 
             val modelFile = File(filesDir, "gemma-2b-it-gpu-int4.bin")
+
+            // 🌟 수정된 핵심 기능: 스마트폰에서 수동 다운로드한 파일을 찾아 앱 안으로 복사하기 🌟
+            val filePickerLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.GetContent()
+            ) { uri: Uri? ->
+                if (uri != null) {
+                    isCopying = true
+                    statusText = "파일을 앱으로 옮기는 중입니다... (약 1~2분 소요)"
+                    
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            contentResolver.openInputStream(uri)?.use { input ->
+                                FileOutputStream(modelFile).use { output ->
+                                    val buffer = ByteArray(16384)
+                                    var length: Int
+                                    while (input.read(buffer).also { length = it } > 0) {
+                                        output.write(buffer, 0, length)
+                                    }
+                                }
+                            }
+                            withContext(Dispatchers.Main) {
+                                isCopying = false
+                                isReady = true
+                                statusText = "복사 완료! 이제 완벽하게 작동합니다."
+                                initEngine(modelFile.absolutePath)
+                            }
+                        } catch (e: Exception) {
+                            withContext(Dispatchers.Main) {
+                                isCopying = false
+                                statusText = "파일 옮기기 실패: ${e.message}"
+                            }
+                        }
+                    }
+                }
+            }
 
             val speechLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.StartActivityForResult()
@@ -69,7 +101,7 @@ class MainActivity : ComponentActivity() {
                     isReady = true
                     initEngine(modelFile.absolutePath)
                 } else {
-                    statusText = "처음 1번, AI 머리(모델)를 다운받아야 합니다."
+                    statusText = "먼저 인공지능 파일(.bin)을 다운로드해주세요."
                 }
             }
 
@@ -84,41 +116,14 @@ class MainActivity : ComponentActivity() {
                 
                 if (!isReady) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    if (isDownloading) {
+                    if (isCopying) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = progressText, style = MaterialTheme.typography.bodySmall)
                     } else {
                         Button(
-                            onClick = {
-                                isDownloading = true
-                                scope.launch(Dispatchers.IO) {
-                                    val modelUrl = "https://huggingface.co/google/gemma-2b-it-gpu-int4/resolve/main/gemma-2b-it-gpu-int4.bin"
-                                    try {
-                                        downloadFile(modelUrl, modelFile) { downloaded, total ->
-                                            val mbDownloaded = downloaded / (1024 * 1024)
-                                            val mbTotal = total / (1024 * 1024)
-                                            scope.launch(Dispatchers.Main) {
-                                                progressText = "다운로드 중: ${mbDownloaded}MB / ${mbTotal}MB"
-                                            }
-                                        }
-                                        withContext(Dispatchers.Main) {
-                                            isDownloading = false
-                                            isReady = true
-                                            statusText = "다운로드 끝! 이제 인터넷을 꺼도 됩니다."
-                                            initEngine(modelFile.absolutePath)
-                                        }
-                                    } catch (e: Exception) {
-                                        withContext(Dispatchers.Main) {
-                                            isDownloading = false
-                                            statusText = "실패했어요: ${e.message}"
-                                        }
-                                    }
-                                }
-                            },
+                            onClick = { filePickerLauncher.launch("*/*") }, // 모든 파일 찾기 창 띄우기
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("여기를 눌러서 인공지능 다운받기")
+                            Text("다운받은 인공지능 파일 찾아서 넣기")
                         }
                     }
                 }
@@ -172,8 +177,6 @@ class MainActivity : ComponentActivity() {
                             withContext(Dispatchers.Main) {
                                 responseText = result
                                 isLoading = false
-                                
-                                // 🌟 수정 2: 마지막 파라미터에 확실한 이름표("response_id") 달아주기 🌟
                                 tts?.speak(result, TextToSpeech.QUEUE_FLUSH, null, "response_id")
                             }
                         }
@@ -207,60 +210,6 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-    }
-
-    private fun downloadFile(urlString: String, outputFile: File, onProgress: (Long, Long) -> Unit) {
-        var currentUrl = urlString
-        var connection: HttpURLConnection
-        var redirects = 0
-        
-        while (true) {
-            val url = URL(currentUrl)
-            connection = url.openConnection() as HttpURLConnection
-            connection.connectTimeout = 15000
-            connection.readTimeout = 15000
-            connection.instanceFollowRedirects = false 
-
-            val status = connection.responseCode
-            if (status == HttpURLConnection.HTTP_MOVED_TEMP ||
-                status == HttpURLConnection.HTTP_MOVED_PERM ||
-                status == HttpURLConnection.HTTP_SEE_OTHER) {
-                currentUrl = connection.getHeaderField("Location")
-                redirects++
-                if (redirects > 5) throw Exception("주소 이동이 너무 많습니다.")
-                continue
-            }
-            break
-        }
-
-        if (connection.responseCode !in 200..299) {
-            throw Exception("서버 연결 실패: ${connection.responseCode}")
-        }
-
-        val fileLength = connection.contentLengthLong
-        val input = connection.inputStream
-        val output = FileOutputStream(outputFile)
-        
-        val data = ByteArray(16384) 
-        var total: Long = 0
-        var count: Int
-        var lastUpdate: Long = 0
-
-        while (input.read(data).also { count = it } != -1) {
-            total += count.toLong()
-            output.write(data, 0, count)
-            
-            if (total - lastUpdate > 1024 * 1024 || total == fileLength) {
-                lastUpdate = total
-                if (fileLength > 0) {
-                    onProgress(total, fileLength)
-                }
-            }
-        }
-        
-        output.flush()
-        output.close()
-        input.close()
     }
 
     override fun onDestroy() {
