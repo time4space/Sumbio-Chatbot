@@ -49,12 +49,12 @@ class MainActivity : ComponentActivity() {
             var isLoading by remember { mutableStateOf(false) }
             val scope = rememberCoroutineScope()
 
-            // 🌟 수정: 사용자가 다운로드한 파일 이름이 달라도, 앱 내부에서는 'ai_model.task'로 통일해서 저장합니다 🌟
-            val modelFile = File(filesDir, "ai_model.task")
+            // 🌟 파일 이름을 Gemma 4 전용으로 깔끔하게 정리 🌟
+            val modelFile = File(filesDir, "gemma4_model.task")
 
             val askAi: (String) -> Unit = { query ->
                 if (llmInference == null) {
-                    responseText = "오류: 인공지능 뇌(모델)가 로딩되지 않았습니다."
+                    responseText = "오류: Gemma 4 엔진이 로딩되지 않았습니다."
                 } else if (query.isNotBlank()) {
                     isLoading = true
                     responseText = "생각하는 중..."
@@ -62,7 +62,7 @@ class MainActivity : ComponentActivity() {
 
                     scope.launch(Dispatchers.IO) {
                         try {
-                            val result = llmInference?.generateResponse(query) ?: "앗, 대답을 만들지 못했어요."
+                            val result = llmInference?.generateResponse(query) ?: "대답을 생성하지 못했습니다."
                             withContext(Dispatchers.Main) {
                                 responseText = result
                                 isLoading = false
@@ -96,7 +96,7 @@ class MainActivity : ComponentActivity() {
             ) { uri: Uri? ->
                 if (uri != null) {
                     isCopying = true
-                    statusText = "파일을 앱으로 옮기는 중입니다... (약 1~2분 소요)"
+                    statusText = "Gemma 4 파일을 앱으로 옮기는 중입니다... (약 1~2분 소요)"
                     
                     scope.launch(Dispatchers.IO) {
                         try {
@@ -127,18 +127,17 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(Unit) {
                 if (modelFile.exists() && modelFile.length() > 0) {
-                    statusText = "엔진 로딩 중..."
+                    statusText = "Gemma 4 엔진 로딩 중..."
                     val resultMsg = initEngine(modelFile.absolutePath)
                     statusText = resultMsg
                     isReady = llmInference != null
                 } else {
-                    // 🌟 수정: .bin 대신 .task 형식도 안내 🌟
-                    statusText = "먼저 최신 인공지능 파일(.task)을 찾아 넣어주세요."
+                    statusText = "먼저 Gemma 4 모델 파일(.task)을 찾아 넣어주세요."
                 }
             }
 
             Column(modifier = Modifier.padding(20.dp).fillMaxSize()) {
-                Text(text = "내 폰 안의 인공지능", style = MaterialTheme.typography.headlineSmall)
+                Text(text = "Gemma 4 온디바이스 스피커", style = MaterialTheme.typography.headlineSmall)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
@@ -155,7 +154,7 @@ class MainActivity : ComponentActivity() {
                             onClick = { filePickerLauncher.launch("*/*") },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("다운받은 인공지능 파일(.task) 찾아서 넣기")
+                            Text("다운받은 Gemma 4 모델 찾아 넣기")
                         }
                     }
                 }
@@ -221,13 +220,13 @@ class MainActivity : ComponentActivity() {
         return try {
             val options = LlmInference.LlmInferenceOptions.builder()
                 .setModelPath(path)
-                .setMaxTokens(512)
+                .setMaxTokens(512) // 대답의 최대 길이 제한 (메모리 절약)
                 .build()
             llmInference = LlmInference.createFromOptions(this, options)
             "준비 완료! (인터넷 없이도 작동합니다)"
         } catch (e: Exception) {
             e.printStackTrace()
-            "엔진 로딩 실패: 지원하지 않는 모델 형식이거나 메모리가 부족합니다. (${e.message})"
+            "엔진 로딩 실패: 지원하지 않는 모델 형식이거나 기기 메모리가 부족합니다. (${e.message})"
         }
     }
 
